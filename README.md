@@ -1,93 +1,119 @@
-# Student Risk Classifier — TODO & Decision Log
+# Student Risk Classifier — DCS & GDG AI/ML Task
 
-DCS & GDG AI/ML recruitment task. Deadline: **Oct 7, 2026**.
-Dataset: `dcs_student_data.csv` (10,030 rows, 21 cols).
-Goal: classify students into **Low / Medium / High** academic risk and generate per-student recommendations.
+Identifying students at academic risk from `dcs_student_data.csv` (10,030 rows, 21 columns).
 
-## Known facts about this dataset (verified, don't re-derive)
+**Headline finding:** the dataset is synthetically generated with independent random
+columns — it contains *no learnable signal* (proved below, linearly and empirically).
+The deliverable is therefore an explicit, auditable **criteria-based risk system**
+(what the task asks for: *"define your own criteria ... and explain your approach"*),
+plus a complete ML due-diligence notebook proving why a learned model cannot beat a
+baseline on this data.
 
-- **No predictive signal exists.** All pairwise correlations between features and scores ≈ 0 (e.g. Attendance vs Final_Score = −0.014). `Total_Score` doesn't even correlate with its own component columns. `Grade` is random across the full score range. The data is synthetic with independent random columns.
-  - Consequence: the EDA conclusion is a *proven negative*, stated plainly with a heatmap as evidence. The model section compares against a majority-class baseline honestly instead of pretending to find signal.
-- **~2% dirty data is planted deliberately** (this is the real test):
-  - ~200 NaNs each in Age, Attendance, Midterm, Final, Assignments, Quizzes, Participation, Projects
-  - Gender: `' FEMALE '`, `' MALE '` (whitespace variants); Department: `' engineering '`, `'BUSINESS'`, `'Math'`, `'CS'` vs `'Computer Science'`
-  - Invalid values: Age −3 and 87; Attendance −12 and 135; Final_Score −5 and 132; `math_score` contains a literal `'\t41'` string (column loads as text)
-  - 30 duplicate Student_IDs
+## Repository map
 
-## Pipeline (ordered)
+| File | Contents |
+|---|---|
+| `01_data_cleaning.ipynb` | Parse-level cleaning of the planted dirty data → `dcs_student_data_cleaned.csv` |
+| `02_eda.ipynb` | Exploration: heatmap, scatters, boxplots, attendance analysis → the no-signal conclusion |
+| `03_risk_system.ipynb` | **The answer:** risk criteria, per-student prediction output, recommendation engine, bonus report |
+| `04_ml_models_due_diligence.ipynb` | Baseline + LogReg / Decision Tree / Random Forest — the honest negative result |
+| `student_risk_recommendations.csv` | Bonus report: `Student \| Attendance \| Risk \| Recommendation` for all 10,000 students |
 
-### Phase 1 — Parse-level cleaning (before ANY plot)
-- [ ] Coerce all score columns with `pd.to_numeric(errors='coerce')` (fixes `'\t41'`)
-- [ ] Strip whitespace + normalize case on Gender, Department; merge synonyms (`Math`→`Mathematics`, `CS`→`Computer Science`)
-- [ ] Apply invalid-value conditions (see Decision Conditions below) → set out-of-range to NaN
-- [ ] Drop duplicate Student_ID rows
+## 1. Data Exploration
 
-### Phase 2 — EDA / Visualise (in `visualisation_scores.ipynb`)
-- [ ] Correlation heatmap of all numeric columns (the money plot)
-- [ ] Scatter: each score column vs Final_Score and Total_Score
-- [ ] Boxplots: Total_Score by Department, by Gender
-- [ ] Attendance vs marks scatter + correlation number (task explicitly asks for this)
-- [ ] Markdown takeaway under EVERY plot — thought process is being graded
-- [ ] Final markdown cell: state the no-signal finding plainly
+- **Every pairwise correlation between numeric columns is ≈ 0** (all |r| < 0.02).
+  Attendance vs Final_Score: **r = −0.014**. Attendance vs Total_Score: flat as well,
+  and mean score is constant across all 5% attendance bands.
+- `Total_Score` is uniform on [50, 100] and independent even of its own component
+  columns (`Midterm`, `Final`, `Assignments`, `Quizzes`, `Projects`) — impossible in
+  real data, diagnostic of synthetic generation.
+- `Grade` is meaningless: every grade A–F spans the full 50–100 Total_Score range.
+- Boxplots of Total_Score by Department and by Gender overlap almost perfectly.
 
-### Phase 3 — Define risk criteria ← *the step the task grades hardest*
-- [ ] Write the Low/Medium/High rule (see Decision Conditions) in a markdown cell with justification
-- [ ] Apply rule → create `Risk` label column; print class distribution
+**Conclusion (stated in `02_eda.ipynb` with plots as evidence):** no feature, numeric or
+categorical, carries information about any score. EDA on this dataset is a proven negative.
 
-### Phase 4 — Fill missing + split
-- [ ] Median-impute numeric NaNs (median, not mean — planted garbage drags the mean)
-- [ ] 80/20 stratified split on the `Risk` label (`stratify=y`)
+## 2. Data Preprocessing
 
-### Phase 5 — Model
-- [ ] Features: early-semester only (see Decision Conditions — no leakage)
-- [ ] Baseline: `DummyClassifier(strategy='most_frequent')` — the number to beat
-- [ ] Candidates: Logistic Regression, Decision Tree, Random Forest
-- [ ] Train, then hyperparameters: start with RF defaults; tune `max_depth`, `n_estimators` only if train≫test gap appears
+The raw file contains deliberately planted dirt (~2% of cells), handled in `01_data_cleaning.ipynb`:
 
-### Phase 6 — Evaluate
-- [ ] Accuracy, per-class Precision/Recall, **macro-F1**, confusion matrix
-- [ ] Overfit check: train F1 vs test F1 (train ≫ test → overfit → reduce depth)
-- [ ] Report recall on HIGH class specifically (missing a struggling student is the costly error)
-- [ ] Compare all models against the DummyClassifier baseline; state the honest conclusion
-
-### Phase 7 — Output & bonus
-- [ ] `predict_risk(student)` → prints the task's exact format (Student / Attendance / Marks / Risk / Recommendation)
-- [ ] Recommendation rules: map (risk level, weakest factor) → specific advice string
-- [ ] Bonus: auto-generate CSV report `Student | Attendance | Risk | Recommendation` for all rows
-
-## Decision Conditions
-
-**Invalid values (fix at parse time, before EDA):**
-| Column | Condition | Action |
+| Dirt | Examples | Handling |
 |---|---|---|
-| any score, Attendance | value < 0 or > 100 | set NaN → later median-impute |
-| Age | value < 15 or > 60 | set NaN → median-impute |
-| math_score etc. | non-numeric string | `to_numeric(errors='coerce')` |
-| Gender/Dept | leading/trailing space, case | strip + title-case + synonym map |
-| Student_ID | duplicated | keep first, drop rest (before split — same student in train & test contaminates evaluation) |
+| Missing values | ~200 NaNs in each of 8 columns | Kept as NaN for EDA; **median-imputed inside the ML pipeline** (fit on train only — no leakage) |
+| Non-numeric strings | `'\t41'` in `math_score` | `pd.to_numeric(errors='coerce')` |
+| Inconsistent labels | `' FEMALE '`, `' engineering '`, `'Math'`, `'CS'` | strip, normalise case, merge synonyms |
+| Impossible values | Age −3 and 87; Attendance −12 and 135; Final_Score −5 and 132 | Set to NaN (outside [0,100] for scores, [15,60] for age) |
+| Duplicate IDs | 30 duplicated Student_IDs | Dropped (before splitting — same student in train+test contaminates evaluation) |
 
-**Missing values:** numeric → median. (Never mean with dirty data. ~2% missing, so imputation can't distort anything.)
+Result: 10,030 → **10,000 clean rows**.
 
-**Feature set (no leakage):**
-- IN: Attendance *(report-only, not a model feature — decided: zero correlation with marks)*, Midterm_Score, Assignments_Avg, Quizzes_Avg, Participation_Score, Projects_Score, math/reading/writing/science, test_preparation_course, Department (one-hot), Gender (one-hot)
-- OUT: Final_Score, Total_Score, Grade — these *define* the label; feeding them in is re-deriving the answer
+## 3. Risk Model — explicit criteria
 
-**Risk label criteria (proposed default — adjust thresholds, then commit):**
-- High: Total_Score < 60
-- Medium: 60 ≤ Total_Score < 75
-- Low: Total_Score ≥ 75
-- (Attendance < 60% noted in the recommendation text regardless of label, since it's excluded from features)
+| Risk | Criterion | Share of cohort |
+|---|---|---|
+| **High** | Total_Score < 60 | 1,955 students (~20%) |
+| **Medium** | 60 ≤ Total_Score < 75 | 3,035 (~30%) |
+| **Low** | Total_Score ≥ 75 | 5,010 (~50%) |
 
-**Model choice:** Random Forest unless logistic regression matches it — trees need no scaling and handle outliers natively. But expect all models ≈ baseline; that result, shown cleanly, IS the deliverable.
+**Why criteria-based and not learned:** the label must come from defensible rules (the
+task's own requirement), and `04` proves no classifier can learn those rules from the
+features — because the features are independent of everything, including the score the
+rules are built on. Attendance is deliberately not in the label (zero information in this
+data) but low attendance (< 60%) is still surfaced in every recommendation.
 
-**Metric priority:** macro-F1 > HIGH-class recall > accuracy. Justify in one markdown line (imbalanced classes; false negatives cost most).
+## 4. Evaluation (from `04_ml_models_due_diligence.ipynb`)
 
-**Overfit condition:** if train F1 − test F1 > 0.1 → reduce `max_depth`, retrain, recheck.
+| Model | Accuracy | Macro-F1 | High-risk recall | Train macro-F1 | Overfit gap |
+|---|---|---|---|---|---|
+| Dummy (majority class) | 0.501 | 0.223 | 0.00 | 0.223 | 0.00 |
+| Logistic Regression | 0.501 | 0.223 | 0.00 | 0.223 | 0.00 |
+| Decision Tree | 0.371 | 0.325 | 0.20 | 1.000 | 0.67 |
+| Random Forest | 0.496 | 0.254 | 0.01 | 1.000 | 0.75 |
+| Random Forest (max_depth=8) | 0.501 | 0.223 | 0.00 | 0.240 | 0.02 |
 
-## Definition of done
-- [ ] Notebook runs top-to-bottom clean, comments explain *why*, not what
-- [ ] Every plot has a written takeaway
-- [ ] The no-signal finding is stated explicitly with heatmap evidence
-- [ ] Metrics include the baseline comparison
-- [ ] Prediction output matches the task's example format
-- [ ] Bonus report CSV generated
+**Interpretation:** models either collapse exactly onto the baseline (learn "always Low")
+or memorise the training set (train F1 = 1.0) and return to baseline on test. The
+Decision Tree's higher macro-F1 comes with *below-baseline accuracy* and is within noise
+on ~2,000 test rows — a louder coin flip, not a better model. This is the expected
+behaviour when label ⊥ features, and no feature engineering can change it
+(any deterministic transformation of independent variables stays independent).
+
+## 5. Prediction & Recommendation
+
+`predict_risk(student_id)` in `03_risk_system.ipynb` prints the task's required format:
+
+```
+Student: Omar Williams (S1000)
+Attendance: 52%
+Marks: 56
+Risk: HIGH
+Recommendation: Immediate intervention: targeted remediation in science score
+with weekly tutoring and mentor check-ins. Priority: raise attendance above 60%
+(currently 52%).
+```
+
+Recommendations are driven by the student's **weakest factor**, compared *after
+normalising each column by its scale* — `Participation_Score` is 0–10, all other scores
+0–100, so raw comparison would flag Participation for nearly everyone. The resulting
+advice varies across 10 distinct factors.
+
+## 6. Bonus — automated report
+
+`student_risk_recommendations.csv`: `Student | Attendance | Risk | Recommendation` for
+all 10,000 students, generated from the explicit criteria (ground truth), not from a
+model guessing at noise.
+
+## What data would make this predictable
+
+Real early-warning systems are built on features this dataset lacks: attendance *trend*
+across the semester (not one aggregate), assignment submission lateness, LMS/login
+activity, prior-year or entry scores, and midterm-to-final *delta*. With those, the
+pipeline in `04` — leakage-free split, in-pipeline imputation, baseline-first evaluation —
+is exactly the one you'd run, and it would find the signal immediately.
+
+## How to run
+
+```bash
+pip install pandas numpy scikit-learn matplotlib
+# Run the notebooks in order: 01 -> 02 -> 03 (04 is independent, needs 01's output)
+```
